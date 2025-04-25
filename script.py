@@ -1,11 +1,25 @@
-import pandas as pd
-import logging
-import os
-from datetime import datetime
+import psycopg2
+from psycopg2 import OperationalError
 
-# Configuração de logs
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    filename=f'importacao_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'
-)
+def connect_db():
+    # Configurações de conexão
+    config = {
+        'host': 'localhost',
+        'database': 'tsmxdb',
+        'user': 'postgres',
+        'password': 'admin',
+        'port': '5432'
+    }
+
+    try:
+        # Tentar estabelecer conexão
+        connect = psycopg2.connect(**config)
+        print("Conexão bem-sucedida!")
+        connect.close()
+    
+    except OperationalError as e:
+        print(f"Erro ao conectar ao PostgreSQL: {e}")
+
+# Executar o teste de conexão
+if __name__ == "__main__":
+    connect_db()
