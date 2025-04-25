@@ -52,7 +52,7 @@ def load_file(file_path):
         print(f"Erro ao carregar o arquivo XLSX: {e}")
         return None
 
-def save_to_database(df, table_name, conn=None):
+def send_db(df, table_name, conn=None):
     if conn is None:
         conn = connect_db()
         if conn is None:
@@ -117,7 +117,7 @@ if __name__ == "__main__":
     
     if df is not None and conn is not None:
         table_name = "tbl_clientes"
-        save_to_database(df, table_name, conn)
+        send_db(df, table_name, conn)
         
         # Fechar conexão
         if conn is not None:
