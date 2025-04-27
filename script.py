@@ -34,8 +34,8 @@ ESTADO_PARA_SIGLA = {
     'Tocantins': 'TO'
 }
 
+# Função para conectar ao banco de dados PostgreSQL
 def connect_db():
-    """Estabelece conexão com o banco de dados PostgreSQL"""
     config = {
         'host': 'localhost',
         'database': 'tsmxdb',
@@ -52,9 +52,10 @@ def connect_db():
         print(f"Erro ao conectar ao PostgreSQL: {e}")
         return None
 
+# Função para carregar o arquivo XLSX e preparar os dados para importação
 def load_file(file_path):
-    """Carrega um arquivo XLSX e prepara os dados para importação"""
     try:
+        # Mapeundo os nomes das colunas do arquivo XLSX para os nomes conformes no banco de dados
         column_mapping = {
             "Nome/Razão Social": "nome_razao_social",
             "Nome Fantasia": "nome_fantasia",
@@ -96,8 +97,8 @@ def load_file(file_path):
         print(f"Erro ao carregar o arquivo XLSX: {e}")
         return None
 
+# Função para enviar dados para o banco de dados PostgreSQL
 def send_db(df, table_name, conn=None, conflict_key=None, conflict_columns=None, ignore_duplicates=False):
-    """Envia dados para o banco de dados PostgreSQL com verificação de duplicidade"""
     if conn is None:
         conn = connect_db()
         if conn is None:
@@ -180,12 +181,12 @@ def send_db(df, table_name, conn=None, conflict_key=None, conflict_columns=None,
         if close_conn and conn:
             conn.close()
 
+#Prepara dados para tbl_clientes
 def prepare_clientes_data(df):
-    """Prepara dados para tbl_clientes"""
     return df[["nome_razao_social", "nome_fantasia", "cpf_cnpj", "data_nascimento", "data_cadastro"]]
 
+# Prepara dados para tbl_clientes e verifica duplicidades
 def prepare_clientes_data_with_check(df, conn):
-    """Prepara dados para tbl_clientes e verifica duplicidades"""
     clientes_df = prepare_clientes_data(df)
     
     if clientes_df is None:
@@ -207,8 +208,8 @@ def prepare_clientes_data_with_check(df, conn):
         print(f"Erro ao verificar duplicidade em clientes: {e}")
         return clientes_df
 
+# Prepara dados para tbl_cliente_contratos com conversão correta de tipos
 def prepare_contratos_data(df, conn):
-    """Prepara dados para tbl_cliente_contratos com conversão correta de tipos"""
     try:
         cursor = conn.cursor()
         cursor.execute("SELECT id, cpf_cnpj FROM tbl_clientes")
@@ -254,8 +255,8 @@ def prepare_contratos_data(df, conn):
         print(f"Erro ao preparar contratos: {e}")
         return None
 
+# Prepara dados para tbl_cliente_contratos e verifica duplicidades
 def prepare_contratos_data_with_check(df, conn):
-    """Prepara dados para tbl_cliente_contratos e verifica duplicidades"""
     contratos_df = prepare_contratos_data(df, conn)
     
     if contratos_df is None:
@@ -281,8 +282,8 @@ def prepare_contratos_data_with_check(df, conn):
         print(f"Erro ao verificar duplicidade em contratos: {e}")
         return contratos_df
 
+# Prepara dados para tbl_cliente_contatos
 def prepare_contatos_data(df, conn):
-    """Prepara dados para tbl_cliente_contatos"""
     try:
         cursor = conn.cursor()
         cursor.execute("SELECT id, cpf_cnpj FROM tbl_clientes")
@@ -324,8 +325,8 @@ def prepare_contatos_data(df, conn):
         print(f"Erro ao preparar contatos: {e}")
         return None
 
+# Prepara dados para tbl_cliente_contatos e verifica duplicidades
 def prepare_contatos_data_with_check(df, conn):
-    """Prepara dados para tbl_cliente_contatos e verifica duplicidades"""
     contatos_df = prepare_contatos_data(df, conn)
     
     if contatos_df is None:
@@ -359,12 +360,12 @@ def prepare_contatos_data_with_check(df, conn):
         print(f"Erro ao verificar duplicidade em contatos: {e}")
         return contatos_df
 
+# Prepara dados para tbl_planos
 def prepare_planos_data(df):
-    """Prepara dados para tbl_planos"""
     return df[["descricao", "valor"]].drop_duplicates(subset=["descricao"])
 
+# Prepara dados para tbl_planos e verifica duplicidades
 def prepare_planos_data_with_check(df, conn):
-    """Prepara dados para tbl_planos e verifica duplicidades"""
     planos_df = prepare_planos_data(df)
     
     if planos_df is None:
@@ -386,12 +387,12 @@ def prepare_planos_data_with_check(df, conn):
         print(f"Erro ao verificar duplicidade em planos: {e}")
         return planos_df
 
+# Prepara dados para tbl_status_contrato
 def prepare_status_data():
-    """Prepara dados para tbl_status_contrato"""
     return pd.DataFrame([{'status': 'Ativo'}, {'status': 'Inativo'}])
 
+# Prepara dados para tbl_status_contrato e verifica duplicidades
 def prepare_status_data_with_check(conn):
-    """Prepara dados para tbl_status_contrato e verifica duplicidades"""
     status_df = prepare_status_data()
     
     try:
@@ -410,16 +411,16 @@ def prepare_status_data_with_check(conn):
         print(f"Erro ao verificar duplicidade em status: {e}")
         return status_df
 
+# Prepara dados para tbl_tipos_contato
 def prepare_tipos_contato_data():
-    """Prepara dados para tbl_tipos_contato"""
     return pd.DataFrame([
         {'tipo_contato': 'Telefone'},
         {'tipo_contato': 'Celular'},
         {'tipo_contato': 'E-mail'}
     ])
 
+# Prepara dados para tbl_tipos_contato e verifica duplicidades
 def prepare_tipos_contato_data_with_check(conn):
-    """Prepara dados para tbl_tipos_contato e verifica duplicidades"""
     tipos_df = prepare_tipos_contato_data()
     
     try:
@@ -438,6 +439,7 @@ def prepare_tipos_contato_data_with_check(conn):
         print(f"Erro ao verificar duplicidade em tipos de contato: {e}")
         return tipos_df
 
+# Função principal para executar o script
 if __name__ == "__main__":
     conn = connect_db()
     file_path = "./src/dados_importacao.xlsx"
