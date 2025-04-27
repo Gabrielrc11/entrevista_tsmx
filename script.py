@@ -96,7 +96,7 @@ def load_file(file_path):
         print(f"Erro ao carregar o arquivo XLSX: {e}")
         return None
 
-def send_db(df, table_name, conn=None, conflict_key=None, conflict_columns=None):
+def send_db(df, table_name, conn=None, conflict_key=None, conflict_columns=None, ignore_duplicates=False):
     """Envia dados para o banco de dados PostgreSQL com verificação de duplicidade"""
     if conn is None:
         conn = connect_db()
@@ -131,29 +131,49 @@ def send_db(df, table_name, conn=None, conflict_key=None, conflict_columns=None)
             
         cols = ', '.join([f'"{col}"' for col in valid_columns])
         placeholders = ', '.join(['%s'] * len(valid_columns))
-        insert_query = f"INSERT INTO {table_name} ({cols}) VALUES ({placeholders})"
         
-        # Verificação de conflito para evitar duplicidades
-        if conflict_key and conflict_key in valid_columns:
-            # Se conflict_columns for None, atualizamos todas as colunas exceto a chave
-            if conflict_columns is None:
-                update_cols = [f'"{col}" = EXCLUDED."{col}"' for col in valid_columns if col != conflict_key]
-            else:
-                # Apenas atualize as colunas especificadas em conflict_columns
-                update_cols = [f'"{col}" = EXCLUDED."{col}"' for col in conflict_columns if col in valid_columns]
+        # Lidar com inserções para evitar erros de duplicidade
+        if ignore_duplicates:
+            # Usa inserção individual com try/except para ignorar erros de duplicidade
+            insert_query = f"INSERT INTO {table_name} ({cols}) VALUES ({placeholders})"
+            success_count = 0
+            error_count = 0
             
-            if update_cols:
-                update_clause = ', '.join(update_cols)
-                insert_query += f" ON CONFLICT ({conflict_key}) DO UPDATE SET {update_clause}"
-            else:
-                # Se não houver colunas para atualizar, apenas ignore o conflito
-                insert_query += f" ON CONFLICT ({conflict_key}) DO NOTHING"
+            for _, row_data in df_clean.iterrows():
+                try:
+                    values = [row_data[col] for col in valid_columns]
+                    cursor.execute(insert_query, values)
+                    success_count += 1
+                except psycopg2.errors.UniqueViolation:
+                    # Ignora erros de duplicidade
+                    conn.rollback()  # Necessário após um erro para continuar operações
+                    error_count += 1
+                    continue
+                
+            conn.commit()
+            print(f"Processados {success_count} registros com sucesso e {error_count} duplicidades ignoradas na tabela '{table_name}'")
+        else:
+            # Comportamento normal com ON CONFLICT quando há uma única chave
+            insert_query = f"INSERT INTO {table_name} ({cols}) VALUES ({placeholders})"
+            
+            if conflict_key and conflict_key in valid_columns:
+                if conflict_columns is None:
+                    update_cols = [f'"{col}" = EXCLUDED."{col}"' for col in valid_columns if col != conflict_key]
+                else:
+                    update_cols = [f'"{col}" = EXCLUDED."{col}"' for col in conflict_columns if col in valid_columns]
+                
+                if update_cols:
+                    update_clause = ', '.join(update_cols)
+                    insert_query += f" ON CONFLICT ({conflict_key}) DO UPDATE SET {update_clause}"
+                else:
+                    insert_query += f" ON CONFLICT ({conflict_key}) DO NOTHING"
+            
+            rows = [tuple(row) for row in df_clean[valid_columns].values]
+            cursor.executemany(insert_query, rows)
+            conn.commit()
+            
+            print(f"Processados {len(df_clean)} registros na tabela '{table_name}'")
         
-        rows = [tuple(row) for row in df_clean[valid_columns].values]
-        cursor.executemany(insert_query, rows)
-        conn.commit()
-        
-        print(f"Processados {len(df_clean)} registros na tabela '{table_name}'")
         return True
         
     except Exception as e:
@@ -269,28 +289,28 @@ def prepare_contatos_data(df, conn):
             if not cliente_id:
                 continue
                 
-            # Telefone
+            # Telefone - garantir que seja string
             if pd.notna(row['telefone']):
                 contatos_data.append({
                     'cliente_id': cliente_id,
                     'tipo_contato_id': tipos_map.get('Telefone', 1),
-                    'contato': row['telefone']
+                    'contato': str(row['telefone']).strip()
                 })
             
-            # Celular
+            # Celular - garantir que seja string
             if pd.notna(row['celular']):
                 contatos_data.append({
                     'cliente_id': cliente_id,
                     'tipo_contato_id': tipos_map.get('Celular', 2),
-                    'contato': row['celular']
+                    'contato': str(row['celular']).strip()
                 })
             
-            # Email
+            # Email - garantir que seja string
             if pd.notna(row['email']):
                 contatos_data.append({
                     'cliente_id': cliente_id,
                     'tipo_contato_id': tipos_map.get('E-mail', 3),
-                    'contato': row['email']
+                    'contato': str(row['email']).strip()
                 })
         
         return pd.DataFrame(contatos_data)
@@ -309,13 +329,26 @@ def prepare_contatos_data_with_check(df, conn):
         # Consultar contatos existentes para evitar duplicidades
         cursor = conn.cursor()
         cursor.execute("SELECT cliente_id, tipo_contato_id, contato FROM tbl_cliente_contatos")
-        existing_contatos = {(row[0], row[1], row[2]) for row in cursor.fetchall()}
+        
+        # Converter todos os valores para string para garantir comparação consistente
+        # Isso é importante especialmente para valores numéricos como telefones
+        existing_contatos = {(
+            row[0], 
+            row[1], 
+            str(row[2]).strip() if row[2] is not None else None
+        ) for row in cursor.fetchall()}
         
         # Filtrar apenas registros que não existem
-        filtered_df = contatos_df[~contatos_df.apply(
-            lambda row: (row['cliente_id'], row['tipo_contato_id'], row['contato']) in existing_contatos, 
-            axis=1
-        )]
+        # Converter os valores do DataFrame para o mesmo formato que os dados do banco
+        def not_duplicate(row):
+            key = (
+                row['cliente_id'], 
+                row['tipo_contato_id'], 
+                str(row['contato']).strip() if row['contato'] is not None else None
+            )
+            return key not in existing_contatos
+        
+        filtered_df = contatos_df[contatos_df.apply(not_duplicate, axis=1)]
         
         print(f"Contatos após filtro de duplicidade: {len(filtered_df)} de {len(contatos_df)}")
         return filtered_df
@@ -370,7 +403,8 @@ if __name__ == "__main__":
             contatos_df = prepare_contatos_data_with_check(df, conn)
             if contatos_df is not None and not contatos_df.empty:
                 # Usar cliente_id, tipo_contato_id e contato como chaves compostas
-                send_db(contatos_df, "tbl_cliente_contatos", conn)
+                # Usando o novo parâmetro ignore_duplicates para contornar erros de duplicidade
+                send_db(contatos_df, "tbl_cliente_contatos", conn, ignore_duplicates=True)
             else:
                 print("Nenhum novo contato para importar.")
             
