@@ -96,8 +96,8 @@ def load_file(file_path):
         print(f"Erro ao carregar o arquivo XLSX: {e}")
         return None
 
-def send_db(df, table_name, conn=None, conflict_key=None):
-    """Envia dados para o banco de dados PostgreSQL"""
+def send_db(df, table_name, conn=None, conflict_key=None, conflict_columns=None):
+    """Envia dados para o banco de dados PostgreSQL com verificação de duplicidade"""
     if conn is None:
         conn = connect_db()
         if conn is None:
@@ -133,11 +133,21 @@ def send_db(df, table_name, conn=None, conflict_key=None):
         placeholders = ', '.join(['%s'] * len(valid_columns))
         insert_query = f"INSERT INTO {table_name} ({cols}) VALUES ({placeholders})"
         
+        # Verificação de conflito para evitar duplicidades
         if conflict_key and conflict_key in valid_columns:
-            update_cols = [f'"{col}" = EXCLUDED."{col}"' for col in valid_columns if col != conflict_key]
+            # Se conflict_columns for None, atualizamos todas as colunas exceto a chave
+            if conflict_columns is None:
+                update_cols = [f'"{col}" = EXCLUDED."{col}"' for col in valid_columns if col != conflict_key]
+            else:
+                # Apenas atualize as colunas especificadas em conflict_columns
+                update_cols = [f'"{col}" = EXCLUDED."{col}"' for col in conflict_columns if col in valid_columns]
+            
             if update_cols:
                 update_clause = ', '.join(update_cols)
                 insert_query += f" ON CONFLICT ({conflict_key}) DO UPDATE SET {update_clause}"
+            else:
+                # Se não houver colunas para atualizar, apenas ignore o conflito
+                insert_query += f" ON CONFLICT ({conflict_key}) DO NOTHING"
         
         rows = [tuple(row) for row in df_clean[valid_columns].values]
         cursor.executemany(insert_query, rows)
@@ -214,6 +224,31 @@ def prepare_contratos_data(df, conn):
         print(f"Erro ao preparar contratos: {e}")
         return None
 
+def prepare_contratos_data_with_check(df, conn):
+    """Prepara dados para tbl_cliente_contratos e verifica duplicidades"""
+    contratos_df = prepare_contratos_data(df, conn)
+    
+    if contratos_df is None:
+        return None
+    
+    try:
+        # Consultar contratos existentes para evitar duplicidades
+        cursor = conn.cursor()
+        cursor.execute("SELECT cliente_id, plano_id FROM tbl_cliente_contratos")
+        existing_contratos = {(row[0], row[1]) for row in cursor.fetchall()}
+        
+        # Filtrar apenas registros que não existem
+        filtered_df = contratos_df[~contratos_df.apply(
+            lambda row: (row['cliente_id'], row['plano_id']) in existing_contratos, axis=1
+        )]
+        
+        print(f"Contratos após filtro de duplicidade: {len(filtered_df)} de {len(contratos_df)}")
+        return filtered_df
+    
+    except Exception as e:
+        print(f"Erro ao verificar duplicidade em contratos: {e}")
+        return contratos_df  # Retorne o original em caso de erro
+
 def prepare_contatos_data(df, conn):
     """Prepara dados para tbl_cliente_contatos"""
     try:
@@ -263,6 +298,32 @@ def prepare_contatos_data(df, conn):
         print(f"Erro ao preparar contatos: {e}")
         return None
 
+def prepare_contatos_data_with_check(df, conn):
+    """Prepara dados para tbl_cliente_contatos e verifica duplicidades"""
+    contatos_df = prepare_contatos_data(df, conn)
+    
+    if contatos_df is None:
+        return None
+    
+    try:
+        # Consultar contatos existentes para evitar duplicidades
+        cursor = conn.cursor()
+        cursor.execute("SELECT cliente_id, tipo_contato_id, contato FROM tbl_cliente_contatos")
+        existing_contatos = {(row[0], row[1], row[2]) for row in cursor.fetchall()}
+        
+        # Filtrar apenas registros que não existem
+        filtered_df = contatos_df[~contatos_df.apply(
+            lambda row: (row['cliente_id'], row['tipo_contato_id'], row['contato']) in existing_contatos, 
+            axis=1
+        )]
+        
+        print(f"Contatos após filtro de duplicidade: {len(filtered_df)} de {len(contatos_df)}")
+        return filtered_df
+    
+    except Exception as e:
+        print(f"Erro ao verificar duplicidade em contatos: {e}")
+        return contatos_df  # Retorne o original em caso de erro
+
 if __name__ == "__main__":
     conn = connect_db()
     file_path = "./src/dados_importacao.xlsx"
@@ -294,17 +355,24 @@ if __name__ == "__main__":
             clientes_df = prepare_clientes_data(df)
             send_db(clientes_df, "tbl_clientes", conn, conflict_key="cpf_cnpj")
             
-            # 5. Importar contratos
+            # 5. Importar contratos com verificação de duplicidade
             print("\nImportando contratos...")
-            contratos_df = prepare_contratos_data(df, conn)
-            if contratos_df is not None:
+            contratos_df = prepare_contratos_data_with_check(df, conn)
+            if contratos_df is not None and not contratos_df.empty:
+                # Usar cliente_id e plano_id como chaves compostas para evitar duplicidade
+                # Como não é possível usar chaves compostas no ON CONFLICT, filtramos antes
                 send_db(contratos_df, "tbl_cliente_contratos", conn)
+            else:
+                print("Nenhum novo contrato para importar.")
             
-            # 6. Importar contatos
+            # 6. Importar contatos com verificação de duplicidade
             print("\nImportando contatos...")
-            contatos_df = prepare_contatos_data(df, conn)
-            if contatos_df is not None:
+            contatos_df = prepare_contatos_data_with_check(df, conn)
+            if contatos_df is not None and not contatos_df.empty:
+                # Usar cliente_id, tipo_contato_id e contato como chaves compostas
                 send_db(contatos_df, "tbl_cliente_contatos", conn)
+            else:
+                print("Nenhum novo contato para importar.")
             
             print("\nProcesso de importação concluído com sucesso!")
             
