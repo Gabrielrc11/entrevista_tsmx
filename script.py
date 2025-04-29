@@ -98,7 +98,7 @@ def load_file(file_path):
         return None
 
 # Função para enviar dados para o banco de dados PostgreSQL
-def send_db(df, table_name, conn=None, conflict_key=None, conflict_columns=None, ignore_duplicates=False):
+def send_db(df, table_name, conn=None, conflict_key=None, conflict_columns=None):
     if conn is None:
         conn = connect_db()
         if conn is None:
@@ -133,43 +133,25 @@ def send_db(df, table_name, conn=None, conflict_key=None, conflict_columns=None,
         cols = ', '.join([f'"{col}"' for col in valid_columns])
         placeholders = ', '.join(['%s'] * len(valid_columns))
         
-        if ignore_duplicates:
-            insert_query = f"INSERT INTO {table_name} ({cols}) VALUES ({placeholders})"
-            success_count = 0
-            error_count = 0
+        insert_query = f"INSERT INTO {table_name} ({cols}) VALUES ({placeholders})"
+        
+        if conflict_key and conflict_key in valid_columns:
+            if conflict_columns is None:
+                update_cols = [f'"{col}" = EXCLUDED."{col}"' for col in valid_columns if col != conflict_key]
+            else:
+                update_cols = [f'"{col}" = EXCLUDED."{col}"' for col in conflict_columns if col in valid_columns]
             
-            for _, row_data in df_clean.iterrows():
-                try:
-                    values = [row_data[col] for col in valid_columns]
-                    cursor.execute(insert_query, values)
-                    success_count += 1
-                except psycopg2.errors.UniqueViolation:
-                    conn.rollback()
-                    error_count += 1
-                    continue
-                
-            conn.commit()
-            print(f"Processados {success_count} registros com sucesso e {error_count} duplicidades ignoradas na tabela '{table_name}'")
-        else:
-            insert_query = f"INSERT INTO {table_name} ({cols}) VALUES ({placeholders})"
-            
-            if conflict_key and conflict_key in valid_columns:
-                if conflict_columns is None:
-                    update_cols = [f'"{col}" = EXCLUDED."{col}"' for col in valid_columns if col != conflict_key]
-                else:
-                    update_cols = [f'"{col}" = EXCLUDED."{col}"' for col in conflict_columns if col in valid_columns]
-                
-                if update_cols:
-                    update_clause = ', '.join(update_cols)
-                    insert_query += f" ON CONFLICT ({conflict_key}) DO UPDATE SET {update_clause}"
-                else:
-                    insert_query += f" ON CONFLICT ({conflict_key}) DO NOTHING"
-            
-            rows = [tuple(row) for row in df_clean[valid_columns].values]
-            cursor.executemany(insert_query, rows)
-            conn.commit()
-            
-            print(f"Processados {len(df_clean)} registros na tabela '{table_name}'")
+            if update_cols:
+                update_clause = ', '.join(update_cols)
+                insert_query += f" ON CONFLICT ({conflict_key}) DO UPDATE SET {update_clause}"
+            else:
+                insert_query += f" ON CONFLICT ({conflict_key}) DO NOTHING"
+        
+        rows = [tuple(row) for row in df_clean[valid_columns].values]
+        cursor.executemany(insert_query, rows)
+        conn.commit()
+        
+        print(f"Processados {len(df_clean)} registros na tabela '{table_name}'")
         
         return True
         
@@ -600,7 +582,7 @@ if __name__ == "__main__":
             print("\nImportando contatos...")
             contatos_df = prepare_contatos_data_with_check(df, conn)
             if contatos_df is not None and not contatos_df.empty:
-                send_db(contatos_df, "tbl_cliente_contatos", conn, ignore_duplicates=True)
+                send_db(contatos_df, "tbl_cliente_contatos", conn)
             else:
                 print("Nenhum novo contato para importar.")
             
