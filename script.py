@@ -1,40 +1,21 @@
 import psycopg2
-from psycopg2 import OperationalError
 import pandas as pd
 import numpy as np
 
 # Dicionário de mapeamento de nomes de estados para siglas
 ESTADO_PARA_SIGLA = {
-    'Acre': 'AC',
-    'Alagoas': 'AL',
-    'Amapá': 'AP',
-    'Amazonas': 'AM',
-    'Bahia': 'BA',
-    'Ceará': 'CE',
-    'Distrito Federal': 'DF',
-    'Espírito Santo': 'ES',
-    'Goiás': 'GO',
-    'Maranhão': 'MA',
-    'Mato Grosso': 'MT',
-    'Mato Grosso do Sul': 'MS',
-    'Minas Gerais': 'MG',
-    'Pará': 'PA',
-    'Paraíba': 'PB',
-    'Paraná': 'PR',
-    'Pernambuco': 'PE',
-    'Piauí': 'PI',
-    'Rio de Janeiro': 'RJ',
-    'Rio Grande do Norte': 'RN',
-    'Rio Grande do Sul': 'RS',
-    'Rondônia': 'RO',
-    'Roraima': 'RR',
-    'Santa Catarina': 'SC',
-    'São Paulo': 'SP',
-    'Sergipe': 'SE',
+    'Acre': 'AC', 'Alagoas': 'AL', 'Amapá': 'AP', 'Amazonas': 'AM',
+    'Bahia': 'BA', 'Ceará': 'CE', 'Distrito Federal': 'DF',
+    'Espírito Santo': 'ES', 'Goiás': 'GO', 'Maranhão': 'MA',
+    'Mato Grosso': 'MT', 'Mato Grosso do Sul': 'MS',
+    'Minas Gerais': 'MG', 'Pará': 'PA', 'Paraíba': 'PB',
+    'Paraná': 'PR', 'Pernambuco': 'PE', 'Piauí': 'PI',
+    'Rio de Janeiro': 'RJ', 'Rio Grande do Norte': 'RN',
+    'Rio Grande do Sul': 'RS', 'Rondônia': 'RO', 'Roraima': 'RR',
+    'Santa Catarina': 'SC', 'São Paulo': 'SP', 'Sergipe': 'SE',
     'Tocantins': 'TO'
 }
 
-# Função para conectar ao banco de dados PostgreSQL
 def connect_db():
     config = {
         'host': 'localhost',
@@ -48,14 +29,12 @@ def connect_db():
         connect = psycopg2.connect(**config)
         print("Conexão bem-sucedida!")
         return connect
-    except OperationalError as e:
+    except Exception as e:
         print(f"Erro ao conectar ao PostgreSQL: {e}")
         return None
 
-# Função para carregar o arquivo XLSX e preparar os dados para importação
 def load_file(file_path):
     try:
-        # Mapeundo os nomes das colunas do arquivo XLSX para os nomes conformes no banco de dados
         column_mapping = {
             "Nome/Razão Social": "nome_razao_social",
             "Nome Fantasia": "nome_fantasia",
@@ -80,8 +59,7 @@ def load_file(file_path):
         }
         
         df = pd.read_excel(file_path, usecols=column_mapping.keys())
-        print(f"Arquivo {file_path} carregado com sucesso!")
-        print(f"Dimensões: {df.shape[0]} linhas x {df.shape[1]} colunas")
+        print(f"Arquivo {file_path} carregado com sucesso! Dimensões: {df.shape[0]} linhas x {df.shape[1]} colunas")
         
         df.rename(columns=column_mapping, inplace=True)
         
@@ -90,14 +68,12 @@ def load_file(file_path):
                 lambda x: ESTADO_PARA_SIGLA.get(x.strip().title(), x) if pd.notna(x) else x
             )
         
-        print("Colunas carregadas:", list(df.columns))
         return df
         
     except Exception as e:
         print(f"Erro ao carregar o arquivo XLSX: {e}")
         return None
 
-# Função para enviar dados para o banco de dados PostgreSQL
 def send_db(df, table_name, conn=None, conflict_key=None, conflict_columns=None):
     if conn is None:
         conn = connect_db()
@@ -112,17 +88,11 @@ def send_db(df, table_name, conn=None, conflict_key=None, conflict_columns=None)
         cursor = conn.cursor()
         
         cursor.execute(f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '{table_name}');")
-        table_exists = cursor.fetchone()[0]
-        
-        if not table_exists:
+        if not cursor.fetchone()[0]:
             print(f"Tabela {table_name} não existe.")
             return False
             
-        cursor.execute(f"""
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_name = '{table_name}'
-        """)
+        cursor.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name = '{table_name}'")
         existing_columns = [row[0] for row in cursor.fetchall()]
         valid_columns = [col for col in df_clean.columns if col in existing_columns]
         
@@ -152,7 +122,6 @@ def send_db(df, table_name, conn=None, conflict_key=None, conflict_columns=None)
         conn.commit()
         
         print(f"Processados {len(df_clean)} registros na tabela '{table_name}'")
-        
         return True
         
     except Exception as e:
@@ -163,372 +132,162 @@ def send_db(df, table_name, conn=None, conflict_key=None, conflict_columns=None)
         if close_conn and conn:
             conn.close()
 
-# Função para validar CPF
-def validar_cpf(cpf):
-    # Remove caracteres não numéricos
-    cpf = ''.join(filter(str.isdigit, str(cpf)))
-    
-    # Verifica se tem 11 dígitos
-    if len(cpf) != 11:
-        return False
-    
-    # Verifica se todos os dígitos são iguais
-    if len(set(cpf)) == 1:
-        return False
-    
-    # Calcula primeiro dígito verificador
-    soma = 0
-    for i in range(9):
-        soma += int(cpf[i]) * (10 - i)
-    resto = soma % 11
-    digito1 = 0 if resto < 2 else 11 - resto
-    
-    # Verifica primeiro dígito
-    if digito1 != int(cpf[9]):
-        return False
-    
-    # Calcula segundo dígito verificador
-    soma = 0
-    for i in range(10):
-        soma += int(cpf[i]) * (11 - i)
-    resto = soma % 11
-    digito2 = 0 if resto < 2 else 11 - resto
-    
-    # Verifica segundo dígito
-    return digito2 == int(cpf[10])
-
-# Função para validar CNPJ
-def validar_cnpj(cnpj):
-    # Remove caracteres não numéricos
-    cnpj = ''.join(filter(str.isdigit, str(cnpj)))
-    
-    # Verifica se tem 14 dígitos
-    if len(cnpj) != 14:
-        return False
-    
-    # Verifica se todos os dígitos são iguais
-    if len(set(cnpj)) == 1:
-        return False
-    
-    # Calcula primeiro dígito verificador
-    multiplicadores = [5,4,3,2,9,8,7,6,5,4,3,2]
-    soma = 0
-    for i in range(12):
-        soma += int(cnpj[i]) * multiplicadores[i]
-    resto = soma % 11
-    digito1 = 0 if resto < 2 else 11 - resto
-    
-    # Verifica primeiro dígito
-    if digito1 != int(cnpj[12]):
-        return False
-    
-    # Calcula segundo dígito verificador
-    multiplicadores = [6,5,4,3,2,9,8,7,6,5,4,3,2]
-    soma = 0
-    for i in range(13):
-        soma += int(cnpj[i]) * multiplicadores[i]
-    resto = soma % 11
-    digito2 = 0 if resto < 2 else 11 - resto
-    
-    # Verifica segundo dígito
-    return digito2 == int(cnpj[13])
-
-# Função para formatar CPF/CNPJ
 def formatar_documento(doc):
     if pd.isna(doc):
         return None
         
-    # Remove caracteres não numéricos
     doc_limpo = ''.join(filter(str.isdigit, str(doc)))
     
-    # Verifica se é CPF ou CNPJ pelo tamanho
-    if len(doc_limpo) == 11 and validar_cpf(doc_limpo):
+    if len(doc_limpo) == 11:  # CPF
         return f"{doc_limpo[:3]}.{doc_limpo[3:6]}.{doc_limpo[6:9]}-{doc_limpo[9:]}"
-    elif len(doc_limpo) == 14 and validar_cnpj(doc_limpo):
+    elif len(doc_limpo) == 14:  # CNPJ
         return f"{doc_limpo[:2]}.{doc_limpo[2:5]}.{doc_limpo[5:8]}/{doc_limpo[8:12]}-{doc_limpo[12:]}"
-    return None
+    
+    return doc_limpo  # Retorna o documento original limpo se não for CPF nem CNPJ
 
-# Modifica a função prepare_clientes_data para usar a validação
-def prepare_clientes_data(df):
+def importar_dados(conn, df):
+    # 1. Importar status
+    print("\nImportando status...")
+    status_df = pd.DataFrame([{'status': 'Ativo'}, {'status': 'Inativo'}])
+    send_db(status_df, "tbl_status_contrato", conn, conflict_key="status")
+    
+    # 2. Importar tipos de contato
+    print("\nImportando tipos de contato...")
+    tipos_contato_df = pd.DataFrame([
+        {'tipo_contato': 'Telefone'}, 
+        {'tipo_contato': 'Celular'}, 
+        {'tipo_contato': 'E-mail'}
+    ])
+    send_db(tipos_contato_df, "tbl_tipos_contato", conn, conflict_key="tipo_contato")
+    
+    # 3. Importar planos
+    print("\nImportando planos...")
+    planos_df = df[["descricao", "valor"]].drop_duplicates(subset=["descricao"])
+    send_db(planos_df, "tbl_planos", conn, conflict_key="descricao")
+    
+    # 4. Importar clientes
+    print("\nImportando clientes...")
     clientes_df = df[["nome_razao_social", "nome_fantasia", "cpf_cnpj", "data_nascimento", "data_cadastro"]].copy()
-    
-    # Aplica a validação e formatação de CPF/CNPJ
     clientes_df['cpf_cnpj'] = clientes_df['cpf_cnpj'].apply(formatar_documento)
-    
-    # Remove registros com documentos inválidos
     clientes_df = clientes_df.dropna(subset=['cpf_cnpj'])
+    send_db(clientes_df, "tbl_clientes", conn, conflict_key="cpf_cnpj")
     
-    return clientes_df
-
-# Prepara dados para tbl_clientes e verifica duplicidades
-def prepare_clientes_data_with_check(df, conn):
-    clientes_df = prepare_clientes_data(df)
+    # 5. Importar contratos
+    print("\nImportando contratos...")
+    # Obter mapeamentos de IDs
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, cpf_cnpj FROM tbl_clientes")
+    clientes_map = {row[1]: row[0] for row in cursor.fetchall()}
     
-    if clientes_df is None:
-        return None
+    cursor.execute("SELECT id, descricao FROM tbl_planos")
+    planos_map = {row[1]: row[0] for row in cursor.fetchall()}
     
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT cpf_cnpj FROM tbl_clientes WHERE cpf_cnpj IS NOT NULL")
-        existing_clientes = {str(row[0]).strip() for row in cursor.fetchall()}
-        
-        filtered_df = clientes_df[
-            ~clientes_df['cpf_cnpj'].astype(str).str.strip().isin(existing_clientes)
-        ]
-        
-        print(f"Clientes após filtro de duplicidade: {len(filtered_df)} de {len(clientes_df)}")
-        return filtered_df
+    cursor.execute("SELECT id FROM tbl_status_contrato WHERE status = 'Ativo' LIMIT 1")
+    status_id = cursor.fetchone()[0] if cursor.rowcount > 0 else 1
     
-    except Exception as e:
-        print(f"Erro ao verificar duplicidade em clientes: {e}")
-        return clientes_df
-
-# Prepara dados para tbl_cliente_contratos com conversão correta de tipos
-def prepare_contratos_data(df, conn):
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, cpf_cnpj FROM tbl_clientes")
-        clientes_map = {row[1]: row[0] for row in cursor.fetchall()}
-        
-        cursor.execute("SELECT id, descricao FROM tbl_planos")
-        planos_map = {row[1]: row[0] for row in cursor.fetchall()}
-        
-        cursor.execute("SELECT id FROM tbl_status_contrato WHERE status = 'Ativo' LIMIT 1")
-        status_id = cursor.fetchone()[0] if cursor.rowcount > 0 else 1
-        
-        contratos_df = df[["dia_vencimento", "isento", "endereco_logradouro", "endereco_numero", 
-                         "endereco_complemento", "endereco_bairro", "endereco_cidade", 
-                         "endereco_cep", "endereco_uf", "cpf_cnpj", "descricao"]].copy()
-        
-        contratos_df['isento'] = contratos_df['isento'].apply(
-            lambda x: str(x).lower() in ('sim', 's', 'true', 't', '1', 'yes', 'y') if pd.notna(x) else False
-        )
-        
-        contratos_df['endereco_uf'] = contratos_df['endereco_uf'].str[:2].str.upper()
-        
-        contratos_df['endereco_logradouro'] = contratos_df['endereco_logradouro'].fillna('Endereço não informado')
-        contratos_df['endereco_numero'] = contratos_df['endereco_numero'].fillna('S/N').astype(str).str[:15]
-        contratos_df['endereco_bairro'] = contratos_df['endereco_bairro'].fillna('Bairro não informado')
-        contratos_df['endereco_cidade'] = contratos_df['endereco_cidade'].fillna('Cidade não informada')
-        contratos_df['endereco_uf'] = contratos_df['endereco_uf'].fillna('DF')
-        
-        # Novo tratamento para CEP
-        def formatar_cep(cep):
-            if pd.isna(cep):
-                return '00000-000'
-            # Remove caracteres não numéricos mas preserva o formato original
-            cep_limpo = str(cep).strip()
-            if not cep_limpo:
-                return '00000-000'
-            # Se tiver hífen ou ponto, remove e verifica
-            cep_numeros = ''.join(filter(str.isdigit, cep_limpo))
-            if len(cep_numeros) == 8:
-                return f"{cep_numeros[:5]}-{cep_numeros[5:]}"
-            # Se não conseguir formatar corretamente, retorna CEP padrão
-            return '00000-000'
-            
-        contratos_df['endereco_cep'] = contratos_df['endereco_cep'].apply(formatar_cep)
-        
-        contratos_df['cliente_id'] = contratos_df['cpf_cnpj'].map(clientes_map)
-        contratos_df['plano_id'] = contratos_df['descricao'].map(planos_map)
-        contratos_df['status_id'] = status_id
-        
-        contratos_df = contratos_df.dropna(subset=['cliente_id', 'plano_id'])
-        
-        return contratos_df[[
+    contratos_df = df[["dia_vencimento", "isento", "endereco_logradouro", "endereco_numero", 
+                     "endereco_complemento", "endereco_bairro", "endereco_cidade", 
+                     "endereco_cep", "endereco_uf", "cpf_cnpj", "descricao"]].copy()
+    
+    # Tratamento de dados
+    contratos_df['isento'] = contratos_df['isento'].apply(
+        lambda x: str(x).lower() in ('sim', 's', 'true', 't', '1', 'yes', 'y') if pd.notna(x) else False
+    )
+    contratos_df['endereco_uf'] = contratos_df['endereco_uf'].str[:2].str.upper()
+    contratos_df['endereco_logradouro'] = contratos_df['endereco_logradouro'].fillna('Endereço não informado')
+    contratos_df['endereco_numero'] = contratos_df['endereco_numero'].fillna('S/N').astype(str).str[:15]
+    contratos_df['endereco_bairro'] = contratos_df['endereco_bairro'].fillna('Bairro não informado')
+    contratos_df['endereco_cidade'] = contratos_df['endereco_cidade'].fillna('Cidade não informada')
+    contratos_df['endereco_uf'] = contratos_df['endereco_uf'].fillna('DF')
+    
+    # Formatação de CEP
+    contratos_df['endereco_cep'] = contratos_df['endereco_cep'].apply(
+        lambda cep: '00000-000' if pd.isna(cep) else 
+        f"{''.join(filter(str.isdigit, str(cep)))[:5]}-{''.join(filter(str.isdigit, str(cep)))[5:]}" 
+        if len(''.join(filter(str.isdigit, str(cep)))) == 8 else '00000-000'
+    )
+    
+    # Adicionar IDs relacionais
+    contratos_df['cliente_id'] = contratos_df['cpf_cnpj'].map(clientes_map)
+    contratos_df['plano_id'] = contratos_df['descricao'].map(planos_map)
+    contratos_df['status_id'] = status_id
+    
+    # Filtrar registros válidos
+    contratos_df = contratos_df.dropna(subset=['cliente_id', 'plano_id'])
+    
+    # Verificar duplicidades de contratos
+    cursor.execute("SELECT cliente_id, plano_id FROM tbl_cliente_contratos")
+    existing_contratos = {(row[0], row[1]) for row in cursor.fetchall()}
+    
+    # Filtrar apenas contratos que não existem
+    contratos_df = contratos_df[~contratos_df.apply(
+        lambda row: (row['cliente_id'], row['plano_id']) in existing_contratos, axis=1
+    )]
+    
+    if not contratos_df.empty:
+        contratos_colunas = [
             'cliente_id', 'plano_id', 'dia_vencimento', 'isento',
             'endereco_logradouro', 'endereco_numero', 'endereco_complemento',
             'endereco_bairro', 'endereco_cidade', 'endereco_cep', 'endereco_uf',
             'status_id'
-        ]]
-        
-    except Exception as e:
-        print(f"Erro ao preparar contratos: {e}")
-        return None
-
-# Prepara dados para tbl_cliente_contratos e verifica duplicidades
-def prepare_contratos_data_with_check(df, conn):
-    contratos_df = prepare_contratos_data(df, conn)
+        ]
+        send_db(contratos_df[contratos_colunas], "tbl_cliente_contratos", conn)
+        print(f"Importados {len(contratos_df)} novos contratos")
+    else:
+        print("Nenhum novo contrato para importar")
     
-    if contratos_df is None:
-        return None
+    # 6. Importar contatos
+    print("\nImportando contatos...")
+    cursor.execute("SELECT id, tipo_contato FROM tbl_tipos_contato")
+    tipos_map = {row[1]: row[0] for row in cursor.fetchall()}
     
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT cliente_id, plano_id 
-            FROM tbl_cliente_contratos
-            WHERE cliente_id IS NOT NULL AND plano_id IS NOT NULL
-        """)
-        existing_contratos = {(row[0], row[1]) for row in cursor.fetchall()}
+    contatos_data = []
+    for _, row in df.iterrows():
+        cliente_id = clientes_map.get(row['cpf_cnpj'])
+        if not cliente_id:
+            continue
+            
+        if pd.notna(row['telefone']):
+            contatos_data.append({
+                'cliente_id': cliente_id,
+                'tipo_contato_id': tipos_map.get('Telefone', 1),
+                'contato': str(row['telefone']).strip()
+            })
         
-        filtered_df = contratos_df[~contratos_df.apply(
-            lambda row: (row['cliente_id'], row['plano_id']) in existing_contratos, axis=1
+        if pd.notna(row['celular']):
+            contatos_data.append({
+                'cliente_id': cliente_id,
+                'tipo_contato_id': tipos_map.get('Celular', 2),
+                'contato': str(row['celular']).strip()
+            })
+        
+        if pd.notna(row['email']):
+            contatos_data.append({
+                'cliente_id': cliente_id,
+                'tipo_contato_id': tipos_map.get('E-mail', 3),
+                'contato': str(row['email']).strip()
+            })
+    
+    contatos_df = pd.DataFrame(contatos_data)
+    if not contatos_df.empty:
+        # Verificar contatos existentes
+        cursor.execute("SELECT cliente_id, tipo_contato_id, contato FROM tbl_cliente_contatos")
+        existing_contatos = {(row[0], row[1], str(row[2]).strip()) for row in cursor.fetchall()}
+        
+        # Filtrar apenas contatos que não existem
+        contatos_df = contatos_df[~contatos_df.apply(
+            lambda row: (row['cliente_id'], row['tipo_contato_id'], str(row['contato']).strip()) in existing_contatos, axis=1
         )]
         
-        print(f"Contratos após filtro de duplicidade: {len(filtered_df)} de {len(contratos_df)}")
-        return filtered_df
+        if not contatos_df.empty:
+            send_db(contatos_df, "tbl_cliente_contatos", conn)
+            print(f"Importados {len(contatos_df)} novos contatos")
+        else:
+            print("Nenhum novo contato para importar")
+    else:
+        print("Nenhum contato para importar")
     
-    except Exception as e:
-        print(f"Erro ao verificar duplicidade em contratos: {e}")
-        return contratos_df
-
-# Prepara dados para tbl_cliente_contatos
-def prepare_contatos_data(df, conn):
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, cpf_cnpj FROM tbl_clientes")
-        clientes_map = {row[1]: row[0] for row in cursor.fetchall()}
-        
-        cursor.execute("SELECT id, tipo_contato FROM tbl_tipos_contato")
-        tipos_map = {row[1]: row[0] for row in cursor.fetchall()}
-        
-        contatos_data = []
-        
-        for _, row in df.iterrows():
-            cliente_id = clientes_map.get(row['cpf_cnpj'])
-            if not cliente_id:
-                continue
-                
-            if pd.notna(row['telefone']):
-                contatos_data.append({
-                    'cliente_id': cliente_id,
-                    'tipo_contato_id': tipos_map.get('Telefone', 1),
-                    'contato': str(row['telefone']).strip()
-                })
-            
-            if pd.notna(row['celular']):
-                contatos_data.append({
-                    'cliente_id': cliente_id,
-                    'tipo_contato_id': tipos_map.get('Celular', 2),
-                    'contato': str(row['celular']).strip()
-                })
-            
-            if pd.notna(row['email']):
-                contatos_data.append({
-                    'cliente_id': cliente_id,
-                    'tipo_contato_id': tipos_map.get('E-mail', 3),
-                    'contato': str(row['email']).strip()
-                })
-        
-        return pd.DataFrame(contatos_data)
-    except Exception as e:
-        print(f"Erro ao preparar contatos: {e}")
-        return None
-
-# Prepara dados para tbl_cliente_contatos e verifica duplicidades
-def prepare_contatos_data_with_check(df, conn):
-    contatos_df = prepare_contatos_data(df, conn)
-    
-    if contatos_df is None:
-        return None
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT cliente_id, tipo_contato_id, contato 
-            FROM tbl_cliente_contatos
-            WHERE cliente_id IS NOT NULL AND tipo_contato_id IS NOT NULL AND contato IS NOT NULL
-        """)
-        
-        existing_contatos = {(
-            row[0], 
-            row[1], 
-            str(row[2]).strip().lower() if row[2] is not None else None
-        ) for row in cursor.fetchall()}
-        
-        def not_duplicate(row):
-            contato = str(row['contato']).strip().lower() if row['contato'] is not None else None
-            key = (row['cliente_id'], row['tipo_contato_id'], contato)
-            return key not in existing_contatos
-        
-        filtered_df = contatos_df[contatos_df.apply(not_duplicate, axis=1)]
-        
-        print(f"Contatos após filtro de duplicidade: {len(filtered_df)} de {len(contatos_df)}")
-        return filtered_df
-    
-    except Exception as e:
-        print(f"Erro ao verificar duplicidade em contatos: {e}")
-        return contatos_df
-
-# Prepara dados para tbl_planos
-def prepare_planos_data(df):
-    return df[["descricao", "valor"]].drop_duplicates(subset=["descricao"])
-
-# Prepara dados para tbl_planos e verifica duplicidades
-def prepare_planos_data_with_check(df, conn):
-    planos_df = prepare_planos_data(df)
-    
-    if planos_df is None:
-        return None
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT descricao FROM tbl_planos")
-        existing_planos = {row[0].lower().strip() for row in cursor.fetchall()}
-        
-        filtered_df = planos_df[
-            ~planos_df['descricao'].str.lower().str.strip().isin(existing_planos)
-        ]
-        
-        print(f"Planos após filtro de duplicidade: {len(filtered_df)} de {len(planos_df)}")
-        return filtered_df
-    
-    except Exception as e:
-        print(f"Erro ao verificar duplicidade em planos: {e}")
-        return planos_df
-
-# Prepara dados para tbl_status_contrato
-def prepare_status_data():
-    return pd.DataFrame([{'status': 'Ativo'}, {'status': 'Inativo'}])
-
-# Prepara dados para tbl_status_contrato e verifica duplicidades
-def prepare_status_data_with_check(conn):
-    status_df = prepare_status_data()
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT status FROM tbl_status_contrato")
-        existing_status = {row[0].lower().strip() for row in cursor.fetchall()}
-        
-        filtered_df = status_df[
-            ~status_df['status'].str.lower().str.strip().isin(existing_status)
-        ]
-        
-        print(f"Status após filtro de duplicidade: {len(filtered_df)} de {len(status_df)}")
-        return filtered_df
-    
-    except Exception as e:
-        print(f"Erro ao verificar duplicidade em status: {e}")
-        return status_df
-
-# Prepara dados para tbl_tipos_contato
-def prepare_tipos_contato_data():
-    return pd.DataFrame([
-        {'tipo_contato': 'Telefone'},
-        {'tipo_contato': 'Celular'},
-        {'tipo_contato': 'E-mail'}
-    ])
-
-# Prepara dados para tbl_tipos_contato e verifica duplicidades
-def prepare_tipos_contato_data_with_check(conn):
-    tipos_df = prepare_tipos_contato_data()
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute("SELECT tipo_contato FROM tbl_tipos_contato")
-        existing_tipos = {row[0].lower().strip() for row in cursor.fetchall()}
-        
-        filtered_df = tipos_df[
-            ~tipos_df['tipo_contato'].str.lower().str.strip().isin(existing_tipos)
-        ]
-        
-        print(f"Tipos de contato após filtro de duplicidade: {len(filtered_df)} de {len(tipos_df)}")
-        return filtered_df
-    
-    except Exception as e:
-        print(f"Erro ao verificar duplicidade em tipos de contato: {e}")
-        return tipos_df
+    print("\nProcesso de importação concluído com sucesso!")
 
 # Função principal para executar o script
 if __name__ == "__main__":
@@ -538,56 +297,7 @@ if __name__ == "__main__":
     
     if df is not None and conn is not None:
         try:
-            # 1. Importar status com verificação de duplicidade
-            print("\nImportando status...")
-            status_df = prepare_status_data_with_check(conn)
-            if status_df is not None and not status_df.empty:
-                send_db(status_df, "tbl_status_contrato", conn, conflict_key="status")
-            else:
-                print("Nenhum novo status para importar.")
-            
-            # 2. Importar tipos de contato com verificação de duplicidade
-            print("\nImportando tipos de contato...")
-            tipos_contato_df = prepare_tipos_contato_data_with_check(conn)
-            if tipos_contato_df is not None and not tipos_contato_df.empty:
-                send_db(tipos_contato_df, "tbl_tipos_contato", conn, conflict_key="tipo_contato")
-            else:
-                print("Nenhum novo tipo de contato para importar.")
-            
-            # 3. Importar planos com verificação de duplicidade
-            print("\nImportando planos...")
-            planos_df = prepare_planos_data_with_check(df, conn)
-            if planos_df is not None and not planos_df.empty:
-                send_db(planos_df, "tbl_planos", conn, conflict_key="descricao")
-            else:
-                print("Nenhum novo plano para importar.")
-            
-            # 4. Importar clientes com verificação de duplicidade
-            print("\nImportando clientes...")
-            clientes_df = prepare_clientes_data_with_check(df, conn)
-            if clientes_df is not None and not clientes_df.empty:
-                send_db(clientes_df, "tbl_clientes", conn, conflict_key="cpf_cnpj")
-            else:
-                print("Nenhum novo cliente para importar.")
-            
-            # 5. Importar contratos com verificação de duplicidade
-            print("\nImportando contratos...")
-            contratos_df = prepare_contratos_data_with_check(df, conn)
-            if contratos_df is not None and not contratos_df.empty:
-                send_db(contratos_df, "tbl_cliente_contratos", conn)
-            else:
-                print("Nenhum novo contrato para importar.")
-            
-            # 6. Importar contatos com verificação de duplicidade
-            print("\nImportando contatos...")
-            contatos_df = prepare_contatos_data_with_check(df, conn)
-            if contatos_df is not None and not contatos_df.empty:
-                send_db(contatos_df, "tbl_cliente_contatos", conn)
-            else:
-                print("Nenhum novo contato para importar.")
-            
-            print("\nProcesso de importação concluído com sucesso!")
-            
+            importar_dados(conn, df)
         except Exception as e:
             print(f"Erro durante o processo de importação: {e}")
         finally:
