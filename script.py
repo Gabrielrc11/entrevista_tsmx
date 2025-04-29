@@ -17,6 +17,7 @@ ESTADO_PARA_SIGLA = {
 }
 
 def connect_db():
+    """Conecta ao banco de dados PostgreSQL."""
     config = {
         'host': 'localhost',
         'database': 'tsmxdb',
@@ -24,17 +25,19 @@ def connect_db():
         'password': 'admin',
         'port': '5432'
     }
-
+    
     try:
-        connect = psycopg2.connect(**config)
+        conn = psycopg2.connect(**config)
         print("Conexão bem-sucedida!")
-        return connect
+        return conn
     except Exception as e:
         print(f"Erro ao conectar ao PostgreSQL: {e}")
         return None
 
 def load_file(file_path):
+    """Carrega e formata os dados do arquivo Excel."""
     try:
+        # Mapeamento de colunas do Excel para o banco de dados
         column_mapping = {
             "Nome/Razão Social": "nome_razao_social",
             "Nome Fantasia": "nome_fantasia",
@@ -59,10 +62,10 @@ def load_file(file_path):
         }
         
         df = pd.read_excel(file_path, usecols=column_mapping.keys())
-        print(f"Arquivo {file_path} carregado com sucesso! Dimensões: {df.shape[0]} linhas x {df.shape[1]} colunas")
+        print(f"Arquivo carregado com sucesso: {df.shape[0]} linhas x {df.shape[1]} colunas")
         
+        # Renomear colunas e converter UF para siglas
         df.rename(columns=column_mapping, inplace=True)
-        
         if 'endereco_uf' in df.columns:
             df['endereco_uf'] = df['endereco_uf'].apply(
                 lambda x: ESTADO_PARA_SIGLA.get(x.strip().title(), x) if pd.notna(x) else x
@@ -71,45 +74,48 @@ def load_file(file_path):
         return df
         
     except Exception as e:
-        print(f"Erro ao carregar o arquivo XLSX: {e}")
+        print(f"Erro ao carregar o arquivo: {e}")
         return None
 
 def send_db(df, table_name, conn=None, conflict_key=None, conflict_columns=None):
+    """Insere ou atualiza dados no banco de dados."""
+    close_conn = False
     if conn is None:
         conn = connect_db()
         if conn is None:
             return False
         close_conn = True
-    else:
-        close_conn = False
     
     try:
         df_clean = df.replace({np.nan: None})
         cursor = conn.cursor()
         
+        # Verificar se a tabela existe
         cursor.execute(f"SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_name = '{table_name}');")
         if not cursor.fetchone()[0]:
             print(f"Tabela {table_name} não existe.")
             return False
             
+        # Obter colunas existentes na tabela
         cursor.execute(f"SELECT column_name FROM information_schema.columns WHERE table_name = '{table_name}'")
-        existing_columns = [row[0] for row in cursor.fetchall()]
+        existing_columns = {row[0] for row in cursor.fetchall()}
         valid_columns = [col for col in df_clean.columns if col in existing_columns]
         
         if not valid_columns:
-            print(f"Nenhuma coluna válida encontrada para a tabela {table_name}")
+            print(f"Nenhuma coluna válida para a tabela {table_name}")
             return False
             
+        # Preparar query de inserção
         cols = ', '.join([f'"{col}"' for col in valid_columns])
         placeholders = ', '.join(['%s'] * len(valid_columns))
-        
         insert_query = f"INSERT INTO {table_name} ({cols}) VALUES ({placeholders})"
         
+        # Adicionar cláusula ON CONFLICT se especificada
         if conflict_key and conflict_key in valid_columns:
-            if conflict_columns is None:
-                update_cols = [f'"{col}" = EXCLUDED."{col}"' for col in valid_columns if col != conflict_key]
-            else:
+            if conflict_columns:
                 update_cols = [f'"{col}" = EXCLUDED."{col}"' for col in conflict_columns if col in valid_columns]
+            else:
+                update_cols = [f'"{col}" = EXCLUDED."{col}"' for col in valid_columns if col != conflict_key]
             
             if update_cols:
                 update_clause = ', '.join(update_cols)
@@ -117,6 +123,7 @@ def send_db(df, table_name, conn=None, conflict_key=None, conflict_columns=None)
             else:
                 insert_query += f" ON CONFLICT ({conflict_key}) DO NOTHING"
         
+        # Executar a inserção
         rows = [tuple(row) for row in df_clean[valid_columns].values]
         cursor.executemany(insert_query, rows)
         conn.commit()
@@ -125,7 +132,7 @@ def send_db(df, table_name, conn=None, conflict_key=None, conflict_columns=None)
         return True
         
     except Exception as e:
-        print(f"Erro ao salvar dados no banco: {e}")
+        print(f"Erro ao salvar dados: {e}")
         conn.rollback()
         return False
     finally:
@@ -133,6 +140,7 @@ def send_db(df, table_name, conn=None, conflict_key=None, conflict_columns=None)
             conn.close()
 
 def formatar_documento(doc):
+    """Formata CPF ou CNPJ para o padrão brasileiro."""
     if pd.isna(doc):
         return None
         
@@ -143,10 +151,13 @@ def formatar_documento(doc):
     elif len(doc_limpo) == 14:  # CNPJ
         return f"{doc_limpo[:2]}.{doc_limpo[2:5]}.{doc_limpo[5:8]}/{doc_limpo[8:12]}-{doc_limpo[12:]}"
     
-    return doc_limpo  # Retorna o documento original limpo se não for CPF nem CNPJ
+    return doc_limpo
 
 def importar_dados(conn, df):
-    # 1. Importar status
+    """Importa todos os dados para o banco de dados."""
+    cursor = conn.cursor()
+    
+    # 1. Importar status de contrato
     print("\nImportando status...")
     status_df = pd.DataFrame([{'status': 'Ativo'}, {'status': 'Inativo'}])
     send_db(status_df, "tbl_status_contrato", conn, conflict_key="status")
@@ -175,7 +186,6 @@ def importar_dados(conn, df):
     # 5. Importar contratos
     print("\nImportando contratos...")
     # Obter mapeamentos de IDs
-    cursor = conn.cursor()
     cursor.execute("SELECT id, cpf_cnpj FROM tbl_clientes")
     clientes_map = {row[1]: row[0] for row in cursor.fetchall()}
     
@@ -185,11 +195,12 @@ def importar_dados(conn, df):
     cursor.execute("SELECT id FROM tbl_status_contrato WHERE status = 'Ativo' LIMIT 1")
     status_id = cursor.fetchone()[0] if cursor.rowcount > 0 else 1
     
+    # Preparar dados de contratos
     contratos_df = df[["dia_vencimento", "isento", "endereco_logradouro", "endereco_numero", 
                      "endereco_complemento", "endereco_bairro", "endereco_cidade", 
                      "endereco_cep", "endereco_uf", "cpf_cnpj", "descricao"]].copy()
     
-    # Tratamento de dados
+    # Tratamento de dados de endereço e contrato
     contratos_df['isento'] = contratos_df['isento'].apply(
         lambda x: str(x).lower() in ('sim', 's', 'true', 't', '1', 'yes', 'y') if pd.notna(x) else False
     )
@@ -215,11 +226,10 @@ def importar_dados(conn, df):
     # Filtrar registros válidos
     contratos_df = contratos_df.dropna(subset=['cliente_id', 'plano_id'])
     
-    # Verificar duplicidades de contratos
+    # Verificar duplicidades e inserir apenas novos contratos
     cursor.execute("SELECT cliente_id, plano_id FROM tbl_cliente_contratos")
     existing_contratos = {(row[0], row[1]) for row in cursor.fetchall()}
     
-    # Filtrar apenas contratos que não existem
     contratos_df = contratos_df[~contratos_df.apply(
         lambda row: (row['cliente_id'], row['plano_id']) in existing_contratos, axis=1
     )]
@@ -241,12 +251,14 @@ def importar_dados(conn, df):
     cursor.execute("SELECT id, tipo_contato FROM tbl_tipos_contato")
     tipos_map = {row[1]: row[0] for row in cursor.fetchall()}
     
+    # Preparar dados de contato
     contatos_data = []
     for _, row in df.iterrows():
         cliente_id = clientes_map.get(row['cpf_cnpj'])
         if not cliente_id:
             continue
             
+        # Adicionar telefone se existir
         if pd.notna(row['telefone']):
             contatos_data.append({
                 'cliente_id': cliente_id,
@@ -254,6 +266,7 @@ def importar_dados(conn, df):
                 'contato': str(row['telefone']).strip()
             })
         
+        # Adicionar celular se existir
         if pd.notna(row['celular']):
             contatos_data.append({
                 'cliente_id': cliente_id,
@@ -261,6 +274,7 @@ def importar_dados(conn, df):
                 'contato': str(row['celular']).strip()
             })
         
+        # Adicionar email se existir
         if pd.notna(row['email']):
             contatos_data.append({
                 'cliente_id': cliente_id,
@@ -270,11 +284,10 @@ def importar_dados(conn, df):
     
     contatos_df = pd.DataFrame(contatos_data)
     if not contatos_df.empty:
-        # Verificar contatos existentes
+        # Verificar contatos existentes e inserir apenas novos
         cursor.execute("SELECT cliente_id, tipo_contato_id, contato FROM tbl_cliente_contatos")
         existing_contatos = {(row[0], row[1], str(row[2]).strip()) for row in cursor.fetchall()}
         
-        # Filtrar apenas contatos que não existem
         contatos_df = contatos_df[~contatos_df.apply(
             lambda row: (row['cliente_id'], row['tipo_contato_id'], str(row['contato']).strip()) in existing_contatos, axis=1
         )]
@@ -287,9 +300,9 @@ def importar_dados(conn, df):
     else:
         print("Nenhum contato para importar")
     
-    print("\nProcesso de importação concluído com sucesso!")
+    print("\nImportação concluída com sucesso!")
 
-# Função principal para executar o script
+# Função principal
 if __name__ == "__main__":
     conn = connect_db()
     file_path = "./src/dados_importacao.xlsx"
@@ -298,8 +311,6 @@ if __name__ == "__main__":
     if df is not None and conn is not None:
         try:
             importar_dados(conn, df)
-        except Exception as e:
-            print(f"Erro durante o processo de importação: {e}")
         finally:
             if conn is not None:
                 conn.close()
