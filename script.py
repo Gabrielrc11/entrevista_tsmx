@@ -236,7 +236,23 @@ def prepare_contratos_data(df, conn):
         contratos_df['endereco_bairro'] = contratos_df['endereco_bairro'].fillna('Bairro não informado')
         contratos_df['endereco_cidade'] = contratos_df['endereco_cidade'].fillna('Cidade não informada')
         contratos_df['endereco_uf'] = contratos_df['endereco_uf'].fillna('DF')
-        contratos_df['endereco_cep'] = contratos_df['endereco_cep'].fillna('00000000').astype(str).str.replace('[^0-9]', '').str[:8]
+        
+        # Novo tratamento para CEP
+        def formatar_cep(cep):
+            if pd.isna(cep):
+                return '00000-000'
+            # Remove caracteres não numéricos mas preserva o formato original
+            cep_limpo = str(cep).strip()
+            if not cep_limpo:
+                return '00000-000'
+            # Se tiver hífen ou ponto, remove e verifica
+            cep_numeros = ''.join(filter(str.isdigit, cep_limpo))
+            if len(cep_numeros) == 8:
+                return f"{cep_numeros[:5]}-{cep_numeros[5:]}"
+            # Se não conseguir formatar corretamente, retorna CEP padrão
+            return '00000-000'
+            
+        contratos_df['endereco_cep'] = contratos_df['endereco_cep'].apply(formatar_cep)
         
         contratos_df['cliente_id'] = contratos_df['cpf_cnpj'].map(clientes_map)
         contratos_df['plano_id'] = contratos_df['descricao'].map(planos_map)
