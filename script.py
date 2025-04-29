@@ -181,9 +181,102 @@ def send_db(df, table_name, conn=None, conflict_key=None, conflict_columns=None,
         if close_conn and conn:
             conn.close()
 
-#Prepara dados para tbl_clientes
+# Função para validar CPF
+def validar_cpf(cpf):
+    # Remove caracteres não numéricos
+    cpf = ''.join(filter(str.isdigit, str(cpf)))
+    
+    # Verifica se tem 11 dígitos
+    if len(cpf) != 11:
+        return False
+    
+    # Verifica se todos os dígitos são iguais
+    if len(set(cpf)) == 1:
+        return False
+    
+    # Calcula primeiro dígito verificador
+    soma = 0
+    for i in range(9):
+        soma += int(cpf[i]) * (10 - i)
+    resto = soma % 11
+    digito1 = 0 if resto < 2 else 11 - resto
+    
+    # Verifica primeiro dígito
+    if digito1 != int(cpf[9]):
+        return False
+    
+    # Calcula segundo dígito verificador
+    soma = 0
+    for i in range(10):
+        soma += int(cpf[i]) * (11 - i)
+    resto = soma % 11
+    digito2 = 0 if resto < 2 else 11 - resto
+    
+    # Verifica segundo dígito
+    return digito2 == int(cpf[10])
+
+# Função para validar CNPJ
+def validar_cnpj(cnpj):
+    # Remove caracteres não numéricos
+    cnpj = ''.join(filter(str.isdigit, str(cnpj)))
+    
+    # Verifica se tem 14 dígitos
+    if len(cnpj) != 14:
+        return False
+    
+    # Verifica se todos os dígitos são iguais
+    if len(set(cnpj)) == 1:
+        return False
+    
+    # Calcula primeiro dígito verificador
+    multiplicadores = [5,4,3,2,9,8,7,6,5,4,3,2]
+    soma = 0
+    for i in range(12):
+        soma += int(cnpj[i]) * multiplicadores[i]
+    resto = soma % 11
+    digito1 = 0 if resto < 2 else 11 - resto
+    
+    # Verifica primeiro dígito
+    if digito1 != int(cnpj[12]):
+        return False
+    
+    # Calcula segundo dígito verificador
+    multiplicadores = [6,5,4,3,2,9,8,7,6,5,4,3,2]
+    soma = 0
+    for i in range(13):
+        soma += int(cnpj[i]) * multiplicadores[i]
+    resto = soma % 11
+    digito2 = 0 if resto < 2 else 11 - resto
+    
+    # Verifica segundo dígito
+    return digito2 == int(cnpj[13])
+
+# Função para formatar CPF/CNPJ
+def formatar_documento(doc):
+    if pd.isna(doc):
+        return None
+        
+    # Remove caracteres não numéricos
+    doc_limpo = ''.join(filter(str.isdigit, str(doc)))
+    
+    # Verifica se é CPF ou CNPJ pelo tamanho
+    if len(doc_limpo) == 11 and validar_cpf(doc_limpo):
+        return f"{doc_limpo[:3]}.{doc_limpo[3:6]}.{doc_limpo[6:9]}-{doc_limpo[9:]}"
+    elif len(doc_limpo) == 14 and validar_cnpj(doc_limpo):
+        return f"{doc_limpo[:2]}.{doc_limpo[2:5]}.{doc_limpo[5:8]}/{doc_limpo[8:12]}-{doc_limpo[12:]}"
+    return None
+
+# Modifica a função prepare_clientes_data para usar a validação
 def prepare_clientes_data(df):
-    return df[["nome_razao_social", "nome_fantasia", "cpf_cnpj", "data_nascimento", "data_cadastro"]]
+    clientes_df = df[["nome_razao_social", "nome_fantasia", "cpf_cnpj", "data_nascimento", "data_cadastro"]].copy()
+    
+    # Aplica a validação e formatação de CPF/CNPJ
+    clientes_df['cpf_cnpj'] = clientes_df['cpf_cnpj'].apply(formatar_documento)
+    
+    # Remove registros com documentos inválidos
+    clientes_df = clientes_df.dropna(subset=['cpf_cnpj'])
+    
+    return clientes_df
 
 # Prepara dados para tbl_clientes e verifica duplicidades
 def prepare_clientes_data_with_check(df, conn):
